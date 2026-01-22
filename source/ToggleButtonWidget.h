@@ -1,9 +1,13 @@
 #pragma once
 
-#include <QtCore/QObject>
-#include <QtWidgets/QPushButton>
-#include <QtWidgets/QTabWidget>
-#include <QtGui/QGuiApplication>
+// Qt6 headers are directly in framework Headers, use framework-style includes
+#include <QObject>
+#include <QPushButton>
+#include <QTabWidget>
+#include <QGuiApplication>
+
+// Include DDImage for CallbackReason enum (needed for MOC)
+#include "DDImage/Knobs.h"
 
 class ToggleButtonKnob;
 

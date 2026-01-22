@@ -1,9 +1,12 @@
 #pragma once
 
-#include "ToggleButtonWidget.moc"
+#include "ToggleButtonWidget.h"
 
-struct ToggleButtonKnob : public DD::Image::Knob 
-{  
+// MOC file will be generated automatically by CMake AUTOMOC
+// Old pre-generated MOC file (ToggleButtonWidget.moc) is incompatible with Qt6
+
+struct ToggleButtonKnob : public DD::Image::Knob
+{
 	ToggleButtonWidget* qtWidget;
 	const char* label;
 	bool buttonState{0};
@@ -17,20 +20,20 @@ struct ToggleButtonKnob : public DD::Image::Knob
 	virtual const char* Class() const { return "ToggleButtonKnob"; }
 	virtual bool not_default () const { return buttonState != 0; }
 
-	WidgetPointer make_widget(const DD::Image::WidgetContext& context) 
+	WidgetPointer make_widget(const DD::Image::WidgetContext& context)
 	{
 		qtWidget = new ToggleButtonWidget(label, buttonState, this);
 		return qtWidget;
 	}
 
-	void store(DD::Image::StoreType type, void* _data, DD::Image::Hash &hash, const DD::Image::OutputContext &oc) 
+	void store(DD::Image::StoreType type, void* _data, DD::Image::Hash &hash, const DD::Image::OutputContext &oc)
 	{
 		bool* destData = (bool*)_data;
 		*destData = buttonState;
 		hash.append(buttonState);
 	}
 
-	virtual void to_script (std::ostream &os, const DD::Image::OutputContext *, bool quote) const 
+	virtual void to_script (std::ostream &os, const DD::Image::OutputContext *, bool quote) const
 	{
 		os << buttonState;
 	}
@@ -50,7 +53,7 @@ struct ToggleButtonKnob : public DD::Image::Knob
 
 
 
-ToggleButtonWidget::ToggleButtonWidget( const char* _label, bool& _buttonState, ToggleButtonKnob* _knob) 
+ToggleButtonWidget::ToggleButtonWidget( const char* _label, bool& _buttonState, ToggleButtonKnob* _knob)
 : knob(_knob)
 , buttonState(_buttonState)
 {
@@ -64,12 +67,12 @@ ToggleButtonWidget::ToggleButtonWidget( const char* _label, bool& _buttonState, 
 	setDown(buttonState);
 	setChecked(buttonState);
 
-	connect(this, SIGNAL(toggled(bool)), this, SLOT(buttonToggleCallback(bool)));
+	connect(this, &QPushButton::toggled, this, &ToggleButtonWidget::buttonToggleCallback);
 }
 
 ToggleButtonWidget::~ToggleButtonWidget()
 {
-	if(knob) 
+	if(knob)
 	{
 		knob->removeCallback( WidgetCallback, this );
 		knob = nullptr;
@@ -88,11 +91,11 @@ int ToggleButtonWidget::WidgetCallback(void* closure, DD::Image::Knob::CallbackR
 			if (qobject_cast<QTabWidget*>(w))
 			{
 				return widget->isVisibleTo(w);
-			}	
+			}
 		}
 		return widget->isVisible();
 	}
-		
+
 	return 0;
 }
 

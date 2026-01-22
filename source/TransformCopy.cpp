@@ -2,7 +2,7 @@
 // Author   : Eyal Shirazi
 // Created  : 01/05/2017
 // Modified : 10/06/2023
-// 
+//
 // TODO (Eyal) ::
 // * bring back proxy scale
 // * Reference needs to be sampled after retime
@@ -21,6 +21,10 @@
 #include <QtWidgets/QLineEdit>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QComboBox>
+
+#include <sstream>
+#include <string>
+#include <algorithm>
 
 #include "ToggleButtonKnob.h"
 
@@ -103,13 +107,13 @@ class TransformCopy final : public DD::Image::Transform
 
 public:
 
-    TransformCopy(Node* node) 
+    TransformCopy(Node* node)
     : DD::Image::Transform(node)
     {
 	kOutputFormat.format(nullptr);
     }
-    
-    ~TransformCopy() 
+
+    ~TransformCopy()
     {}
 
     static const char* const kHelp;
@@ -118,7 +122,7 @@ public:
     const char* Class() const override { return d.name; }
     const char* node_help() const override { return kHelp; }
     int maximum_inputs() const override { return 2; }
-    int minimum_inputs() const override { return 2; }
+    int minimum_inputs() const override { return 2; }  // Always show 2 inputs (input 1 is optional but visible)
 
     void append(DD::Image::Hash& hash) override
     {
@@ -134,7 +138,7 @@ public:
         DD::Image::Transform::append(hash);
     }
 
-    void knobs(DD::Image::Knob_Callback f) override   
+    void knobs(DD::Image::Knob_Callback f) override
     {
         CustomKnob1(ToggleButtonKnob, f, &kInverseValue, "inverse");
 	SetFlags(f, DD::Image::Knob::ENDLINE);
@@ -149,7 +153,7 @@ public:
 	ClearFlags(f, DD::Image::Knob::SLIDER);
 	SetFlags(f, DD::Image::Knob::ENDLINE);
 
-        Button(f, "bake"); 
+        Button(f, "bake");
         SetFlags(f, DD::Image::Knob::STARTLINE);
 
 	Divider(f);
@@ -163,11 +167,11 @@ public:
 	ClearFlags(f, DD::Image::Knob::SLIDER);
 
 	kFormat = Format_knob(f, &kOutputFormat, "format");
-        
-        // Button(f, "root"); 
-        // Button(f, "input"); 
-        // Button(f, "transform"); 
-        
+
+        // Button(f, "root");
+        // Button(f, "input");
+        // Button(f, "transform");
+
         Tab_knob(f, "info");
 
 #ifdef FASTMB
@@ -200,7 +204,7 @@ public:
             return 1;
 	}
 
-        if (k->name() == "bake") 
+        if (k->name() == "bake")
         {
             qt_bake_panel();
             return 1;
@@ -209,8 +213,8 @@ public:
     }
 
     const char* input_label(int n, char*) const override
-    {	
-	switch (n) 
+    {
+	switch (n)
 	{
 		case 0: return "image";
 		case 1: return "transform";
@@ -222,9 +226,22 @@ public:
     {
 	if (input==1)
 	{
+	    // Allow input 1 to be optional (null or default/unconnected)
+	    // When unconnected, op will be nullptr or the default_input
+	    if (op == nullptr)
+	    {
+		return true;  // Unconnected is allowed
+	    }
+	    // Check if it's the default input (unconnected state)
+	    // default_input(1) returns the default input for slot 1
+	    if (op == default_input(1))
+	    {
+		return true;  // Default/unconnected input is allowed
+	    }
+	    // Otherwise enforce type constraint for connected inputs
 	    return
-	    (dynamic_cast<DD::Image::Transform*>(op) != nullptr) ||
-	    (dynamic_cast<DD::Image::CameraOp*>(op)  != nullptr);
+		(dynamic_cast<DD::Image::Transform*>(op) != nullptr) ||
+		(dynamic_cast<DD::Image::CameraOp*>(op)  != nullptr);
 	}
 	return DD::Image::Transform::test_input(input, op);
     }
@@ -263,7 +280,7 @@ public:
 	DD::Image::Transform::_validate(for_real);
 	info_.full_size_format(*kOutputFormat.fullSizeFormat());
 	info_.format(*kOutputFormat.format());
-    
+
         switch(kBBoxMode)
         {
             case (BBoxType_full):
@@ -293,7 +310,14 @@ public:
         cameraOp = nullptr;
 
         if (input(0)) input(0)->validate();
-        if (input(1)) input(1)->validate();
+
+        // Early return if input 1 is not connected (optional input)
+        if (input(1) == nullptr)
+        {
+            return;
+        }
+
+        input(1)->validate();
 
         DD::Image::Op* node = input(1);
 
@@ -306,7 +330,7 @@ public:
         if (node == nullptr) return;
 
         transformCopyOp->validate();
-        
+
         // Homography matrices to convert between different resolutions
         matFormatOut.makeIdentity();
         matFormatIn.makeIdentity();
@@ -383,7 +407,7 @@ public:
             DD::Image::Hash hash;
             kRetimeFrame->store(DD::Image::FloatPtr , &retimeSample, hash, context);
             retimeContext.setFrame(retimeSample);
-        } 
+        }
 
         if (cameraOp != nullptr)
         {
@@ -395,7 +419,7 @@ public:
 
             cameraOp->knob("win_translate")->store(DD::Image::FloatPtr , &win_translate.x, hash, retimeContext);
             cameraOp->knob("win_scale")    ->store(DD::Image::FloatPtr , &win_scale.x    , hash, retimeContext);
-            cameraOp->knob("winroll")      ->store(DD::Image::DoublePtr, &win_roll       , hash, retimeContext);            
+            cameraOp->knob("winroll")      ->store(DD::Image::DoublePtr, &win_roll       , hash, retimeContext);
 
             homography.rotate(radians(win_roll));
             homography.scale(1.0f/win_scale.x, 1.0f/win_scale.y,1);
@@ -414,7 +438,7 @@ public:
                     parMat.makeIdentity();
                     parent->matrixAt(retimeContext, parMat);
                     homography *= parMat;
-                } 
+                }
                 while (parent = dynamic_cast<DD::Image::Transform*>(parent->input(0)));
                 homography = matTransFormatOut * homography * matTransFormatIn;
             }
@@ -424,7 +448,7 @@ public:
                 DD::Image::Transform* transform = dynamic_cast<DD::Image::Transform*>(transformCopyOp->node_input(1, Op::EXECUTABLE_SKIP, &retimeContext)); // EXECUTABLE_INPUT
                 if (transform == nullptr) return;
                 transform->validate();
-                homography = matTransFormatOut * transform->concat_matrix() * matTransFormatIn;              
+                homography = matTransFormatOut * transform->concat_matrix() * matTransFormatIn;
             }
         }
     }
@@ -449,7 +473,7 @@ public:
         if (input(0) == nullptr) return;
 
         set_transformation_data();
-    
+
         if (cameraOp == nullptr && transformOp == nullptr) return;
 
         script_command("nuke.root().firstFrame()",true,true);
@@ -464,7 +488,7 @@ public:
 
         DialogQT.setWindowTitle("bake");
         DialogQT.setWindowFlags(Qt::Dialog);
-    
+
         QPushButton OkButtonQT("Ok");
         OkButtonQT.setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed);
         OkButtonQT.setCheckable(true);
@@ -492,7 +516,7 @@ public:
 
         if (DialogQT.exec() == false) return;
 
-        QStringList RangeListQT = FrameRangeNumbersQT.text().split("-", QString::SkipEmptyParts);
+        QStringList RangeListQT = FrameRangeNumbersQT.text().split("-", Qt::SkipEmptyParts);
 
         switch (RangeListQT.size())
         {
@@ -523,10 +547,10 @@ public:
     {
         enum KNOBKEY
         {
-            KNOBKEY_X0, KNOBKEY_Y0, 
-            KNOBKEY_X1, KNOBKEY_Y1, 
-            KNOBKEY_X2, KNOBKEY_Y2, 
-            KNOBKEY_X3, KNOBKEY_Y3, 
+            KNOBKEY_X0, KNOBKEY_Y0,
+            KNOBKEY_X1, KNOBKEY_Y1,
+            KNOBKEY_X2, KNOBKEY_Y2,
+            KNOBKEY_X3, KNOBKEY_Y3,
             KNOBKEY_SIZE,
         };
 
@@ -562,8 +586,8 @@ public:
             matrixKnobKeys[KNOBKEY_X3].push_back(v3.x);
             matrixKnobKeys[KNOBKEY_Y3].push_back(v3.y);
         }
-        
-        const char* const knobsName[KNOBKEY_SIZE + 1] = 
+
+        const char* const knobsName[KNOBKEY_SIZE + 1] =
         {
             // knob::
             // to1 {KNOBKEY_X0 KNOBKEY_Y0}
@@ -592,10 +616,10 @@ public:
                 {
                     Script  << knobsName[k];
                     Script  << "{curve R x" <<frameStart<<" ";
-                    for (int f = 0, frameRange = frameEnd-frameStart; f < (frameRange); ++f) 
+                    for (int f = 0, frameRange = frameEnd-frameStart; f < (frameRange); ++f)
                     {
                         Script << matrixKnobKeys[k][f] << " ";
-                    }; 
+                    };
                     Script  <<  "}";
                 }
         Script  << knobsName[KNOBKEY_SIZE];
@@ -645,7 +669,7 @@ public:
             matrixKnobKeys[KNOBKEY_A33].push_back(mat.a33);
         }
 
-        const char* const knobsName[KNOBKEY_SIZE + 1] = 
+        const char* const knobsName[KNOBKEY_SIZE + 1] =
         {
             //  knob::
             //  "extra matrix" 1
@@ -676,10 +700,10 @@ public:
                 {
                     Script  << knobsName[k];
                     Script  << "{curve R x" <<frameStart<<" ";
-                    for (int f = 0; f < (frameRange); ++f) 
+                    for (int f = 0; f < (frameRange); ++f)
                     {
                         Script << matrixKnobKeys[k][f] << " ";
-                    }; 
+                    };
                     Script  <<  "}";
                 }
         Script  << knobsName[KNOBKEY_SIZE];
