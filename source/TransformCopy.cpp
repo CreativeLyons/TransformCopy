@@ -14,6 +14,7 @@
 #include "DDImage/CameraOp.h"
 #include "DDImage/Knobs.h"
 #include "DDImage/Format.h"
+#include "DDImage/ViewerContext.h"
 
 #include <QtWidgets/QDialog>
 #include <QtWidgets/QGridLayout>
@@ -25,6 +26,7 @@
 #include <sstream>
 #include <string>
 #include <algorithm>
+#include <cstring>
 
 #include "ToggleButtonKnob.h"
 
@@ -100,6 +102,7 @@ class TransformCopy final : public DD::Image::Transform
     bool kInverseValue{0};
     bool kReferenceValue{0};
     bool kRetimeValue{0};
+    int kChainDepthLimit{50};
 #ifdef FASTMB
     bool kFastValue{0};
 #endif
@@ -134,6 +137,7 @@ public:
         hash.append(kRetimeValue);
         hash.append(kReferenceFrameValue);
         hash.append(kRetimeFrameValue);
+        hash.append(kChainDepthLimit);
 
         DD::Image::Transform::append(hash);
     }
@@ -167,6 +171,10 @@ public:
 	ClearFlags(f, DD::Image::Knob::SLIDER);
 
 	kFormat = Format_knob(f, &kOutputFormat, "format");
+
+	Int_knob(f, &kChainDepthLimit, "chain_depth", "chain depth");
+	Tooltip(f, "Maximum depth to search for transforms in input chain. Set to 0 for unlimited.");
+	SetRange(f, 0, 100);
 
         // Button(f, "root");
         // Button(f, "input");
@@ -246,12 +254,75 @@ public:
 	return DD::Image::Transform::test_input(input, op);
     }
 
+    void build_handles(DD::Image::ViewerContext* ctx) override
+    {
+        // We override build_handles to fix a bug where input 1's handles
+        // (the transform source) were being drawn with our transformation applied,
+        // causing handles to appear in the wrong location (double-transformed).
+        //
+        // Input 0 (image): Should have our transformation applied (normal Transform behavior)
+        // Input 1 (transform source): Should NOT have our transformation applied
+        //   because the transformation CAME FROM input 1, applying it to input 1's
+        //   handles would double-transform them.
+
+        // Ensure we're validated so matrix_ is computed
+        validate(false);
+
+        // Build our own knob handles (inverse, reference, retime buttons, etc.)
+        build_knob_handles(ctx);
+
+        // Save the current modelmatrix before we modify it
+        DD::Image::Matrix4 saved_modelmatrix = ctx->modelmatrix;
+
+        // For input 0 (image), apply our transformation to the modelmatrix
+        // This is what Transform::build_handles normally does
+        ctx->modelmatrix = saved_modelmatrix * concat_matrix();
+        add_input_handle(0, ctx);
+
+        // For input 1 (transform source), DON'T apply our transformation
+        // The transform source's handles should appear in their own coordinate space
+        // Use the original modelmatrix (before we applied our transformation)
+        if (input(1) != nullptr)
+        {
+            ctx->modelmatrix = saved_modelmatrix;
+            add_input_handle(1, ctx);
+        }
+
+        // Restore the modelmatrix
+        ctx->modelmatrix = saved_modelmatrix;
+    }
+
     inline void clean_and_inverse_mat(DD::Image::Matrix4& mat)
     {
         mat.a02 = mat.a12 = mat.a32 = 0;
         mat.a20 = mat.a21 = mat.a23 = 0;
         mat.a22 = 1;
         mat = mat.inverse();
+    }
+
+    // Check if a node is geometry-affecting (should stop chain traversal)
+    // Note: Reformat, Card3D, Dot, NoOp are NOT in this list - they are traversed
+    // Card3D is essentially a cornerpin matrix and should be concatenated
+    bool is_geometry_affecting(DD::Image::Op* op) const
+    {
+        if (op == nullptr) return true;
+
+        // Check class name against known geometry modifiers that should stop the chain
+        // These are nodes that warp geometry in non-linear ways that can't be
+        // represented as a simple matrix transformation
+        const char* className = op->Class();
+        static const char* geometryNodes[] = {
+            "SplineWarp", "GridWarp", "STMap", "LensDistortion",
+            "Reconcile3D", "IDistort", "VectorDistort", "Morph", 
+            "Kronos", "OFlow", "TimeWarp", "FrameHold", nullptr
+        };
+        for (int i = 0; geometryNodes[i]; ++i) {
+            if (strcmp(className, geometryNodes[i]) == 0) return true;
+        }
+
+        // Dot and NoOp are passthrough nodes - not in this list, so they'll
+        // be traversed automatically. Same for Reformat, Card3D, etc.
+        return false;
     }
 
     void _validate(bool for_real) override
@@ -337,16 +408,41 @@ public:
         DD::Image::CameraOp::to_format(matFormatOut, kOutputFormat.fullSizeFormat());
         DD::Image::CameraOp::from_format(matFormatIn, &input0().full_size_format());
 
-        if (dynamic_cast<DD::Image::CameraOp*>(node) != nullptr)
+        // Search the chain for the first Transform or CameraOp
+        // Skip passthrough nodes (Blur, Grade, etc.) but stop at geometry-affecting nodes
+        DD::Image::Op* searchNode = node;
+        int searchDepth = 0;
+        int maxSearchDepth = (kChainDepthLimit > 0) ? kChainDepthLimit : 9999;
+
+        while (searchNode != nullptr && searchDepth < maxSearchDepth)
         {
-            cameraOp = dynamic_cast<DD::Image::CameraOp*>(node);
-            cameraOp->validate();
+            if (dynamic_cast<DD::Image::CameraOp*>(searchNode) != nullptr)
+            {
+                cameraOp = dynamic_cast<DD::Image::CameraOp*>(searchNode);
+                cameraOp->validate();
+                break;
+            }
+            else if (dynamic_cast<DD::Image::Transform*>(searchNode) != nullptr)
+            {
+                transformOp = dynamic_cast<DD::Image::Transform*>(searchNode);
+                transformOp->validate();
+                break;
+            }
+            else if (is_geometry_affecting(searchNode))
+            {
+                // Stop searching at geometry-affecting nodes
+                break;
+            }
+            else
+            {
+                // Skip passthrough node and continue searching
+                searchNode = searchNode->input(0);
+                searchDepth++;
+            }
         }
 
-        if (dynamic_cast<DD::Image::Transform*>(node) != nullptr)
+        if (transformOp != nullptr)
         {
-            transformOp = dynamic_cast<DD::Image::Transform*>(node);
-            transformOp->validate();
 
             float scalex = 1;
             float scaley = 1;
@@ -445,10 +541,54 @@ public:
             else
 #endif
             {
-                DD::Image::Transform* transform = dynamic_cast<DD::Image::Transform*>(transformCopyOp->node_input(1, Op::EXECUTABLE_SKIP, &retimeContext)); // EXECUTABLE_INPUT
-                if (transform == nullptr) return;
-                transform->validate();
-                homography = matTransFormatOut * transform->concat_matrix() * matTransFormatIn;
+                // Walk the entire transform chain, skipping non-Transform nodes
+                // This allows transforms separated by Blur, Grade, etc. to still be concatenated
+                // 
+                // We use concat_matrix() which is public. Each Transform's concat_matrix()
+                // includes all adjacent upstream transforms. When there's a non-Transform
+                // in between (like Blur), we skip past it and multiply the next Transform's
+                // concat_matrix() into our result.
+                DD::Image::Matrix4 accumulatedMatrix;
+                accumulatedMatrix.makeIdentity();
+
+                DD::Image::Op* current = transformOp;
+                int depth = 0;
+                int maxDepth = (kChainDepthLimit > 0) ? kChainDepthLimit : 9999;
+
+                while (current != nullptr && depth < maxDepth)
+                {
+                    depth++;
+
+                    if (DD::Image::Transform* xform = dynamic_cast<DD::Image::Transform*>(current))
+                    {
+                        xform->validate(true);
+                        
+                        // Use concat_matrix() which includes this transform and any 
+                        // immediately adjacent upstream transforms
+                        accumulatedMatrix = accumulatedMatrix * xform->concat_matrix();
+
+                        // Skip to concat_input() which is the first non-Transform upstream
+                        // (or the beginning of the adjacent transform chain)
+                        DD::Image::Iop* concatIn = xform->concat_input();
+                        if (concatIn) {
+                            current = concatIn->input(0);
+                        } else {
+                            current = nullptr;
+                        }
+                    }
+                    else if (is_geometry_affecting(current))
+                    {
+                        // Stop at geometry-affecting nodes
+                        break;
+                    }
+                    else
+                    {
+                        // Skip passthrough node (Blur, Grade, etc.) and continue
+                        current = current->input(0);
+                    }
+                }
+
+                homography = matTransFormatOut * accumulatedMatrix * matTransFormatIn;
             }
         }
     }

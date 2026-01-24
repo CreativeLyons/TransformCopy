@@ -15,6 +15,15 @@ endif()
 
 # Build options
 option(TRANSFORMCOPY_UNIVERSAL2 "Build universal2 binary (arm64+x86_64)" OFF)
+set(NUKE_VERSION "" CACHE STRING "Nuke major version to build for (15 or 16)")
+
+# Validate NUKE_VERSION
+if(NOT NUKE_VERSION)
+    message(FATAL_ERROR "NUKE_VERSION is required. Set -DNUKE_VERSION=15 or -DNUKE_VERSION=16")
+endif()
+if(NOT NUKE_VERSION MATCHES "^(15|16)$")
+    message(FATAL_ERROR "NUKE_VERSION must be 15 or 16. Got: ${NUKE_VERSION}")
+endif()
 
 # Architecture settings
 if(APPLE AND TRANSFORMCOPY_UNIVERSAL2)
@@ -25,13 +34,33 @@ elseif(APPLE)
     message(STATUS "Building arm64 binary")
 endif()
 
-# Find Nuke installation
+# Determine Qt version based on Nuke version
+if(NUKE_VERSION STREQUAL "15")
+    set(QT_VERSION_MAJOR 5)
+    message(STATUS "Nuke 15: Using Qt5")
+elseif(NUKE_VERSION STREQUAL "16")
+    set(QT_VERSION_MAJOR 6)
+    message(STATUS "Nuke 16: Using Qt6")
+endif()
+
+# Find Nuke installation based on NUKE_VERSION
 # NUKE_ROOT should point to Nuke.app/Contents (not MacOS subdirectory)
 if(NOT NUKE_ROOT)
-    set(NUKE_ROOT_DEFAULT_PATHS
-        "/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents"
-        "$ENV{HOME}/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents"
-    )
+    # Build list of possible Nuke paths for the specified version
+    if(NUKE_VERSION STREQUAL "15")
+        set(NUKE_ROOT_DEFAULT_PATHS
+            "/Applications/Nuke15.2v7/Nuke15.2v7.app/Contents"
+            "/Applications/Nuke15.1v6/Nuke15.1v6.app/Contents"
+            "/Applications/Nuke15.0v4/Nuke15.0v4.app/Contents"
+            "$ENV{HOME}/Applications/Nuke15.2v7/Nuke15.2v7.app/Contents"
+        )
+    elseif(NUKE_VERSION STREQUAL "16")
+        set(NUKE_ROOT_DEFAULT_PATHS
+            "/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents"
+            "/Applications/Nuke16.0v7/Nuke16.0v7.app/Contents"
+            "$ENV{HOME}/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents"
+        )
+    endif()
 
     # Find Nuke by looking for Frameworks directory
     find_path(NUKE_ROOT
@@ -42,8 +71,12 @@ if(NOT NUKE_ROOT)
     )
 
     if(NOT NUKE_ROOT)
-        message(WARNING "Nuke installation not found. Please set NUKE_ROOT to Nuke.app/Contents")
-        set(NUKE_ROOT "/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents" CACHE PATH "Path to Nuke.app/Contents")
+        message(WARNING "Nuke ${NUKE_VERSION} installation not found. Please set NUKE_ROOT to Nuke.app/Contents")
+        if(NUKE_VERSION STREQUAL "15")
+            set(NUKE_ROOT "/Applications/Nuke15.2v7/Nuke15.2v7.app/Contents" CACHE PATH "Path to Nuke.app/Contents")
+        else()
+            set(NUKE_ROOT "/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents" CACHE PATH "Path to Nuke.app/Contents")
+        endif()
     endif()
 endif()
 
@@ -95,41 +128,54 @@ set(QT_GUI_INCLUDE_DIR "${QT_GUI_FRAMEWORK}/Headers")
 set(QT_FRAMEWORKS_INCLUDE_DIR "${QT_FRAMEWORKS_DIR}")
 
 # Find moc (Qt Meta Object Compiler)
-# Nuke doesn't ship moc, so we'll use Homebrew Qt6 moc
+# Nuke doesn't ship moc, so we'll use Homebrew Qt moc
 # Note: moc is only used at build time for code generation, not linked into the plugin
-# MUST use Qt6 moc for Qt6 headers compatibility
-find_program(QT_MOC_EXECUTABLE
-    NAMES moc
-    PATHS "/opt/homebrew/Cellar/qt/*/share/qt/libexec"
-            "/opt/homebrew/opt/qt/share/qt/libexec"
-            "/opt/homebrew/opt/qt@6/share/qt/libexec"
-            "/usr/local/Cellar/qt/*/share/qt/libexec"
-    NO_DEFAULT_PATH
-)
-# Try standard bin locations as fallback
-if(NOT QT_MOC_EXECUTABLE)
+# MUST use matching Qt version moc for header compatibility
+if(QT_VERSION_MAJOR EQUAL 6)
+    # Qt6 moc paths
     find_program(QT_MOC_EXECUTABLE
-        NAMES moc-qt6 moc6 moc
-        PATHS "/opt/homebrew/opt/qt/bin"
-                "/opt/homebrew/opt/qt@6/bin"
+        NAMES moc
+        PATHS "/opt/homebrew/Cellar/qt/*/share/qt/libexec"
+              "/opt/homebrew/opt/qt/share/qt/libexec"
+              "/opt/homebrew/opt/qt@6/share/qt/libexec"
+              "/usr/local/Cellar/qt/*/share/qt/libexec"
         NO_DEFAULT_PATH
     )
-endif()
-# Last resort: system PATH
-if(NOT QT_MOC_EXECUTABLE)
-    find_program(QT_MOC_EXECUTABLE NAMES moc-qt6 moc6 moc)
+    if(NOT QT_MOC_EXECUTABLE)
+        find_program(QT_MOC_EXECUTABLE
+            NAMES moc-qt6 moc6 moc
+            PATHS "/opt/homebrew/opt/qt/bin"
+                  "/opt/homebrew/opt/qt@6/bin"
+            NO_DEFAULT_PATH
+        )
+    endif()
+    if(NOT QT_MOC_EXECUTABLE)
+        find_program(QT_MOC_EXECUTABLE NAMES moc-qt6 moc6 moc)
+    endif()
+    if(NOT QT_MOC_EXECUTABLE)
+        message(FATAL_ERROR "Qt6 MOC not found. Please install Qt6 via Homebrew: brew install qt")
+    endif()
+elseif(QT_VERSION_MAJOR EQUAL 5)
+    # Qt5 moc paths
+    find_program(QT_MOC_EXECUTABLE
+        NAMES moc
+        PATHS "/opt/homebrew/opt/qt@5/bin"
+              "/opt/homebrew/Cellar/qt@5/*/bin"
+              "/usr/local/opt/qt@5/bin"
+        NO_DEFAULT_PATH
+    )
+    if(NOT QT_MOC_EXECUTABLE)
+        find_program(QT_MOC_EXECUTABLE NAMES moc-qt5 moc5 moc)
+    endif()
+    if(NOT QT_MOC_EXECUTABLE)
+        message(FATAL_ERROR "Qt5 MOC not found. Please install Qt5 via Homebrew: brew install qt@5")
+    endif()
 endif()
 
-if(QT_MOC_EXECUTABLE)
-    message(STATUS "Found Qt MOC: ${QT_MOC_EXECUTABLE}")
-    # Set MOC executable for AUTOMOC
-    set(CMAKE_AUTOMOC_EXECUTABLE ${QT_MOC_EXECUTABLE})
-else()
-    message(FATAL_ERROR "Qt6 MOC not found. Please install Qt6 via Homebrew: brew install qt")
-endif()
-
+message(STATUS "Found Qt${QT_VERSION_MAJOR} MOC: ${QT_MOC_EXECUTABLE}")
+# Set MOC executable for AUTOMOC
+set(CMAKE_AUTOMOC_EXECUTABLE ${QT_MOC_EXECUTABLE})
 set(QT_FOUND TRUE)
-set(QT_VERSION_MAJOR 6)  # Nuke 16 uses Qt6
 
 # Enable AUTOMOC with explicit MOC executable (we don't use Qt6 CMake targets)
 set(CMAKE_AUTOMOC ON)
@@ -225,23 +271,29 @@ endif()
 # Also remove -DUSE_GLEW if not needed (keeping it for compatibility)
 
 # Link libraries - ONLY Nuke's Qt frameworks
-# Create AGL stub framework (AGL is deprecated but Qt6 still references it)
-set(AGL_STUB_DIR "${CMAKE_BINARY_DIR}/AGL.framework")
-file(MAKE_DIRECTORY "${AGL_STUB_DIR}")
-file(WRITE "${AGL_STUB_DIR}/Info.plist" "<?xml version=\"1.0\"?><plist><dict><key>CFBundleExecutable</key><string>AGL</string></dict></plist>")
-# Create minimal AGL stub dylib using clang
-file(WRITE "${CMAKE_BINARY_DIR}/agl_stub.c" "void aglDummy() {}\n")
-find_program(CLANG_EXECUTABLE clang)
-if(NOT CLANG_EXECUTABLE)
-    set(CLANG_EXECUTABLE "clang")
+# Qt6 requires AGL stub (AGL is deprecated but Qt6 still references it)
+if(QT_VERSION_MAJOR EQUAL 6)
+    set(AGL_STUB_DIR "${CMAKE_BINARY_DIR}/AGL.framework")
+    file(MAKE_DIRECTORY "${AGL_STUB_DIR}")
+    file(WRITE "${AGL_STUB_DIR}/Info.plist" "<?xml version=\"1.0\"?><plist><dict><key>CFBundleExecutable</key><string>AGL</string></dict></plist>")
+    # Create minimal AGL stub dylib using clang
+    file(WRITE "${CMAKE_BINARY_DIR}/agl_stub.c" "void aglDummy() {}\n")
+    find_program(CLANG_EXECUTABLE clang)
+    if(NOT CLANG_EXECUTABLE)
+        set(CLANG_EXECUTABLE "clang")
+    endif()
+    add_custom_command(OUTPUT "${AGL_STUB_DIR}/AGL"
+        COMMAND ${CLANG_EXECUTABLE} -shared -o "${AGL_STUB_DIR}/AGL" "${CMAKE_BINARY_DIR}/agl_stub.c" -install_name "${AGL_STUB_DIR}/AGL"
+        DEPENDS "${CMAKE_BINARY_DIR}/agl_stub.c"
+        COMMENT "Creating AGL stub framework"
+    )
+    add_custom_target(agl_stub DEPENDS "${AGL_STUB_DIR}/AGL")
+    add_dependencies(TransformCopy agl_stub)
+    # Add AGL stub framework search path
+    target_link_options(TransformCopy PRIVATE
+        "LINKER:-F,${CMAKE_BINARY_DIR}"
+    )
 endif()
-add_custom_command(OUTPUT "${AGL_STUB_DIR}/AGL"
-    COMMAND ${CLANG_EXECUTABLE} -shared -o "${AGL_STUB_DIR}/AGL" "${CMAKE_BINARY_DIR}/agl_stub.c" -install_name "${AGL_STUB_DIR}/AGL"
-    DEPENDS "${CMAKE_BINARY_DIR}/agl_stub.c"
-    COMMENT "Creating AGL stub framework"
-)
-add_custom_target(agl_stub DEPENDS "${AGL_STUB_DIR}/AGL")
-add_dependencies(TransformCopy agl_stub)
 
 # Link directly to Nuke's Qt frameworks (not via CMake targets to avoid Homebrew Qt)
 # Use full framework paths to avoid any search path issues
@@ -250,11 +302,6 @@ target_link_libraries(TransformCopy PRIVATE
     "${QT_CORE_FRAMEWORK}/QtCore"
     "${QT_WIDGETS_FRAMEWORK}/QtWidgets"
     "${QT_GUI_FRAMEWORK}/QtGui"
-)
-
-# Add AGL stub framework search path
-target_link_options(TransformCopy PRIVATE
-    "LINKER:-F,${CMAKE_BINARY_DIR}"
 )
 
 # Set install name and RPATH for macOS
@@ -321,9 +368,10 @@ message(STATUS "")
 message(STATUS "=== TransformCopy Build Configuration ===")
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Nuke version: ${NUKE_VERSION}")
 message(STATUS "Architecture: ${CMAKE_OSX_ARCHITECTURES}")
 message(STATUS "Nuke root: ${NUKE_ROOT_DIR}")
-message(STATUS "Qt version: 6 (from Nuke's bundled frameworks)")
+message(STATUS "Qt version: ${QT_VERSION_MAJOR} (from Nuke's bundled frameworks)")
 message(STATUS "Qt frameworks path: ${QT_FRAMEWORKS_DIR}")
 message(STATUS "Output: ${BUNDLE_NAME}")
 message(STATUS "==========================================")

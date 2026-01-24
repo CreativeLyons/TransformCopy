@@ -10,11 +10,14 @@ Thumbs.db
 # Agent memory file
 AGENT.md
 
-# Build directories
+# Build directories (CMake output)
 build/
-*.dylib
+build_*/
 *.so
 *.bundle/
+
+# Built dylibs in root (but keep TransformCopy/*/TransformCopy.dylib)
+/*.dylib
 
 # CMake
 CMakeCache.txt
