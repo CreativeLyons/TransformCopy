@@ -43,3 +43,6 @@ Makefile
 *.tmp
 *.bak
 *.log
+
+# Release packages (create for GitHub Releases, don't commit)
+*.zip
