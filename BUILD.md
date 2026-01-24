@@ -1,84 +1,75 @@
-# Building TransformCopy for Nuke 16 on macOS
+# Building TransformCopy for Nuke 15 & 16 on macOS
 
 ## Prerequisites
 
 - macOS (Apple Silicon or Intel)
 - CMake 3.20 or later
 - Apple Clang (comes with Xcode Command Line Tools)
-- Nuke 16.0v8 installed
-- Qt5 (typically comes with Nuke, but may need to be found separately)
+- Nuke 15.2v7 or Nuke 16.0v8 installed
+- Qt5 MOC (for Nuke 15) or Qt6 MOC (for Nuke 16) - install via Homebrew: `brew install qt@5 qt`
 
-## Build Instructions
+## Quick Build
 
-### 1. Configure the build
-
-First, locate your Nuke 16 installation. The default path is:
-```
-/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents/MacOS
-```
-
-If Nuke is installed elsewhere, you can specify the path:
+Use the automated build script:
 
 ```bash
-# For arm64 only (Apple Silicon)
-cmake -B build -S . \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DNUKE_ROOT_DIR="/path/to/Nuke16.0v8.app/Contents/MacOS"
-
-# For universal2 (arm64 + x86_64)
-cmake -B build -S . \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DNUKE_ROOT_DIR="/path/to/Nuke16.0v8.app/Contents/MacOS" \
-  -DTRANSFORMCOPY_UNIVERSAL2=ON
+./build_all.sh
 ```
 
-### 2. Build the plugin
+This builds universal2 binaries for both Nuke 15 and 16.
+
+## Manual Build Instructions
+
+### Build for Nuke 15
 
 ```bash
-cmake --build build --config Release
+mkdir -p build_nuke15_universal2 && cd build_nuke15_universal2
+cmake .. -DNUKE_VERSION=15 -DTRANSFORMCOPY_UNIVERSAL2=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+cp TransformCopy.dylib ../TransformCopy/Nuke15/
 ```
 
-### 3. Output
+### Build for Nuke 16
 
-The build will create:
-- `build/TransformCopy.ofx.bundle/` - The complete bundle structure
-  - `Contents/Info.plist` - Bundle metadata
-  - `Contents/MacOS/TransformCopy.ofx` - The plugin binary (.dylib)
+```bash
+mkdir -p build_nuke16_universal2 && cd build_nuke16_universal2
+cmake .. -DNUKE_VERSION=16 -DTRANSFORMCOPY_UNIVERSAL2=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build . --config Release -j$(sysctl -n hw.ncpu)
+cp TransformCopy.dylib ../TransformCopy/Nuke16/
+```
+
+### Build Options
+
+- `NUKE_VERSION`: Set to `15` or `16` (required)
+- `TRANSFORMCOPY_UNIVERSAL2`: Set to `ON` for universal2 (arm64 + x86_64), `OFF` for arm64 only
+- `CMAKE_BUILD_TYPE`: `Release` (recommended) or `Debug`
 
 ## Installation
 
-### Option 1: Standard DDImage Plugin Installation (Recommended)
+The `TransformCopy/` folder contains everything needed:
 
-DDImage plugins for Nuke are typically installed as simple `.dylib` files:
+1. Copy the `TransformCopy` folder to `~/.nuke/`
+2. Restart Nuke
+3. Find TransformCopy in the **Transform** menu, or press **Tab** and type "TransformCopy"
 
-```bash
-# Copy the plugin to your Nuke plugins directory
-mkdir -p ~/.nuke/plugins
-cp build/TransformCopy.dylib ~/.nuke/plugins/
+The plugin structure:
+```
+TransformCopy/
+├── init.py          (loads correct version by Nuke major)
+├── menu.py          (adds to Transform menu)
+├── Nuke15/
+│   └── TransformCopy.dylib (universal2)
+└── Nuke16/
+    └── TransformCopy.dylib (universal2)
 ```
 
-**Note:** The bundle structure is created for compatibility, but Nuke DDImage plugins typically just need the `.dylib` file.
+## Testing
 
-### Option 2: Bundle Installation (OFX-style)
-
-If you want to use the bundle structure:
-
-```bash
-# Copy the entire bundle
-cp -r build/TransformCopy.ofx.bundle ~/.nuke/plugins/
-```
-
-However, Nuke may not automatically discover plugins in bundle format for DDImage plugins. The standard approach (Option 1) is recommended.
-
-## Testing in Nuke 16
-
-1. Launch Nuke 16
+1. Launch Nuke 15 or 16
 2. Press `X` to open the node creation dialog
 3. Type "TransformCopy" - the node should appear
-4. Alternatively, create it via Python:
-   ```python
-   nuke.createNode("TransformCopy")
-   ```
+4. Or find it in the Transform menu
+5. Create a node and verify it works
 
 ## Troubleshooting
 
@@ -90,79 +81,118 @@ However, Nuke may not automatically discover plugins in bundle format for DDImag
 
 2. **Verify plugin path:**
    ```bash
-   # Check if the plugin is in the right location
-   ls -la ~/.nuke/plugins/TransformCopy.dylib
+   ls -la ~/.nuke/TransformCopy/Nuke15/TransformCopy.dylib
    ```
 
 3. **Check architecture compatibility:**
    ```bash
-   # Verify the binary architecture
-   file ~/.nuke/plugins/TransformCopy.dylib
-   # Should show: Mach-O 64-bit dynamically linked shared library arm64
-   # or: Mach-O universal binary with 2 architectures: [ arm64 x86_64 ]
+   lipo -info ~/.nuke/TransformCopy/Nuke15/TransformCopy.dylib
+   # Should show: Architectures in the fat file: ... are: x86_64 arm64
    ```
 
 4. **Check dependencies:**
    ```bash
-   # List linked libraries
-   otool -L ~/.nuke/plugins/TransformCopy.dylib
-   # Should show libDDImage.dylib and Qt libraries
+   otool -L ~/.nuke/TransformCopy/Nuke15/TransformCopy.dylib | grep Qt
+   # Should show @rpath/QtCore.framework/..., NO /opt/homebrew paths
    ```
 
 ### Build Errors
 
 #### "Nuke installation not found"
-- Set `NUKE_ROOT_DIR` explicitly:
+- CMake will search common locations, but you can specify:
   ```bash
-  cmake -B build -S . -DNUKE_ROOT_DIR="/Applications/Nuke16.0v8/Nuke16.0v8.app/Contents/MacOS"
+  cmake .. -DNUKE_VERSION=15 -DNUKE_ROOT="/Applications/Nuke15.2v7/Nuke15.2v7.app/Contents"
   ```
 
-#### "Qt5 not found"
-- Nuke ships with Qt5, but CMake might not find it
-- You may need to set `Qt5_DIR`:
+#### "Qt MOC not found"
+- Install Qt via Homebrew:
   ```bash
-  cmake -B build -S . -DQt5_DIR="/path/to/qt5/lib/cmake/Qt5"
+  brew install qt@5 qt  # qt@5 for Nuke 15, qt for Nuke 16
   ```
 
-#### "Missing symbols" or "Undefined symbols"
+#### "Missing symbols" or linking errors
 - Ensure you're linking against the correct Nuke version's DDImage library
-- Check that the Nuke installation is complete
+- Verify the Nuke installation is complete
 
 ### Runtime Errors
 
-#### "dyld: Library not loaded"
-- The plugin can't find required libraries
-- Check `otool -L` output
-- Ensure Nuke's libraries are accessible (they should be if Nuke runs)
+#### "dyld: Library not loaded" or symbol errors
+- Check `otool -L` output - should show `@rpath` paths, not `/opt/homebrew`
+- The plugin must use Nuke's bundled Qt, not Homebrew Qt
 
-#### Plugin crashes Nuke
-- Check Nuke console for detailed error messages
-- Verify the plugin was built with the same C++ standard as Nuke 16
-- Ensure compatibility with Nuke 16's Qt version
-
-## Architecture Notes
+## Architecture Support
 
 - **arm64**: Native for Apple Silicon Macs (M1/M2/M3)
-- **universal2**: Works on both Apple Silicon and Intel Macs (larger binary)
+- **x86_64**: Intel Macs
+- **universal2**: Both architectures in one binary (recommended for releases)
 
-For best performance, use arm64 on Apple Silicon. Use universal2 only if you need to support both architectures.
+## Build System Details
 
-## Code Changes for Nuke 16 Compatibility
-
-The following changes were made for Nuke 16 compatibility:
-
-1. **Updated Qt API**: Changed `QString::SkipEmptyParts` to `Qt::SkipEmptyParts` (deprecated in Qt 5.15+)
-2. **Added missing includes**: Added `<sstream>`, `<string>`, and `<algorithm>` headers
-3. **Removed incompatible flags**: Removed `-msse` flag (not applicable on Apple Silicon)
-4. **Updated C++ standard**: Set to C++17 (from C++11)
-5. **Fixed symbol visibility**: Ensured plugin registration symbols are exported
-
-## Build System
-
-The build uses CMake with the following key features:
-
+The build uses CMake with:
+- Multi-Nuke version support (NUKE_VERSION parameter)
+- Automatic Qt version detection (Qt5 for Nuke 15, Qt6 for Nuke 16)
 - Automatic Qt MOC handling
-- Proper macOS bundle structure
-- Architecture selection (arm64 or universal2)
+- Universal2 binary support
 - RPATH configuration for plugin loading
 - Symbol visibility settings for plugin registration
+- AGL framework stub (for Qt6 compatibility)
+
+## Change History
+
+### v2.0.0 - Nuke 15 & 16 Support
+
+**Major Changes:**
+- Added support for Nuke 15 (Qt5) and Nuke 16 (Qt6)
+- Multi-Nuke build system with automatic Qt version detection
+- Universal2 binaries for both versions
+- Fixed handle drawing bug (input 1 handles no longer double-transform)
+- Enhanced transform chain traversal (walks past Blur, Grade, Reformat, Dot, NoOp, Card3D)
+- Added chain depth control knob
+
+**Code Changes:**
+- Updated `source/TransformCopy.cpp`:
+  - Fixed handle drawing in `build_handles()` override
+  - Added `is_geometry_affecting()` helper function
+  - Enhanced `get_homography()` to walk transform chains
+  - Updated `set_transformation_data()` to search chains
+  - Added `kChainDepthLimit` knob for user control
+- Updated `CMakeLists.txt`:
+  - Added `NUKE_VERSION` parameter (15 or 16)
+  - Automatic Qt5/Qt6 detection based on Nuke version
+  - Universal2 build support
+  - AGL framework stub for Qt6
+
+**Files Added:**
+- `build_all.sh` - Automated build script
+- `package_release.sh` - Release packaging script
+- `TransformCopy/init.py` - Plugin loader
+- `TransformCopy/menu.py` - Menu registration
+
+**Build System:**
+- C++17 standard
+- CMake 3.20+ required
+- Uses Nuke's bundled Qt frameworks (not Homebrew Qt)
+- Creates universal2 binaries by default
+
+### Previous Changes (Nuke 16 Initial Support)
+
+**Code Changes:**
+- Updated Qt API: Changed `QString::SkipEmptyParts` to `Qt::SkipEmptyParts` (deprecated in Qt 5.15+)
+- Added missing includes: `<sstream>`, `<string>`, `<algorithm>`
+- Removed incompatible flags: `-msse` flag (not applicable on Apple Silicon)
+- Updated C++ standard: Set to C++17 (from C++11)
+- Fixed symbol visibility: Ensured plugin registration symbols are exported
+
+**Important Note**: This is a **DDImage plugin** (not an OFX plugin), which uses Nuke's internal DDImage API. The plugin registers using `DD::Image::Iop::Description`.
+
+## Known Limitations
+
+1. **Qt MOC**: Nuke doesn't ship `moc`, so Homebrew Qt MOC is used at build time (not linked into plugin)
+2. **AGL Framework**: Qt6 references deprecated AGL framework - handled with a stub
+3. **Transform Chain**: Non-linear warps (SplineWarp, GridWarp, etc.) stop chain traversal
+
+## Future Improvements
+
+- Consider CI/CD for automated builds
+- Add unit tests if applicable
+- Support for additional Nuke versions as needed
