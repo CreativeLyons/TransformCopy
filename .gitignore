@@ -7,6 +7,9 @@
 ehthumbs.db
 Thumbs.db
 
+# Agent memory file
+AGENT.md
+
 # Build directories
 build/
 *.dylib
